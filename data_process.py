@@ -1,3 +1,5 @@
+import torch
+from transformers import AutoModelForCausalLM
 from datasets import Dataset
 from preprocess_sft_sample import preprocess_sft_sample
 from transformers import AutoTokenizer
@@ -100,3 +102,41 @@ for batch_idx, batch in enumerate(train_dataloader):
 
     print("labels:")
     print(batch["labels"].shape)
+
+print("===== Testing model forward pass =====")
+
+model = AutoModelForCausalLM.from_pretrained(model_name)
+
+device = torch.device(
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+model = model.to(device)
+
+batch = {
+    key: value.to(device)
+    for key, value in batch.items()
+}
+
+model.eval()
+
+with torch.no_grad():
+    outputs = model(**batch)
+
+print(outputs.keys())
+
+print("loss:")
+print(outputs.loss)
+
+print("logits shape:")
+print(outputs.logits.shape)
+
+print(
+    "有效监督 token 数：",
+    (batch["labels"] != -100).sum().item()
+)
+
+print(
+    "总 token 位置数：",
+    batch["labels"].numel()
+)

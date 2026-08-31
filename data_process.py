@@ -140,3 +140,28 @@ print(
     "总 token 位置数：",
     batch["labels"].numel()
 )
+
+print("\n===== Projection Layer Information =====")
+for name, module in model.named_modules():
+    if "proj" in name:
+        print(name, type(module))
+
+layer0_attn = model.model.layers[0].self_attn
+
+for name in ["q_proj", "k_proj", "v_proj", "o_proj"]:
+    module = getattr(layer0_attn, name)
+
+    print(f"\n{name}")
+    print(module)
+    print("weight shape:", module.weight.shape)
+    print("参数量:", module.weight.numel())
+
+layer0_mlp = model.model.layers[0].mlp
+
+for name in ["gate_proj", "up_proj", "down_proj"]:
+    module = getattr(layer0_mlp, name)
+
+    print(f"\n{name}")
+    print(module)
+    print("weight shape:", module.weight.shape)
+    print("参数量:", module.weight.numel())

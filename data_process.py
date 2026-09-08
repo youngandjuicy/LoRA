@@ -5,6 +5,7 @@ from preprocess_sft_sample import preprocess_sft_sample
 from transformers import AutoTokenizer
 from sft_data_collator import sft_data_collator
 from torch.utils.data import DataLoader
+from peft import LoraConfig, TaskType, get_peft_model
 
 
 model_name = "Qwen/Qwen2.5-0.5B-Instruct"
@@ -105,23 +106,23 @@ for batch_idx, batch in enumerate(train_dataloader):
 
 print("===== Testing model forward pass =====")
 
-model = AutoModelForCausalLM.from_pretrained(model_name)
+base_model = AutoModelForCausalLM.from_pretrained(model_name)
 
 device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
     )
 
-model = model.to(device)
+base_model = base_model.to(device)
 
 batch = {
     key: value.to(device)
     for key, value in batch.items()
 }
 
-model.eval()
+base_model.eval()
 
 with torch.no_grad():
-    outputs = model(**batch)
+    outputs = base_model(**batch)
 
 print(outputs.keys())
 
@@ -142,11 +143,11 @@ print(
 )
 
 print("\n===== Projection Layer Information =====")
-for name, module in model.named_modules():
+for name, module in base_model.named_modules():
     if "proj" in name:
         print(name, type(module))
 
-layer0_attn = model.model.layers[0].self_attn
+layer0_attn = base_model.model.layers[0].self_attn
 
 for name in ["q_proj", "k_proj", "v_proj", "o_proj"]:
     module = getattr(layer0_attn, name)
@@ -156,7 +157,7 @@ for name in ["q_proj", "k_proj", "v_proj", "o_proj"]:
     print("weight shape:", module.weight.shape)
     print("参数量:", module.weight.numel())
 
-layer0_mlp = model.model.layers[0].mlp
+layer0_mlp = base_model.model.layers[0].mlp
 
 for name in ["gate_proj", "up_proj", "down_proj"]:
     module = getattr(layer0_mlp, name)
@@ -165,3 +166,168 @@ for name in ["gate_proj", "up_proj", "down_proj"]:
     print(module)
     print("weight shape:", module.weight.shape)
     print("参数量:", module.weight.numel())
+
+print("\n===== LoRA Configuration =====")
+
+lora_config = LoraConfig(
+    r=8,
+    lora_alpha=16,
+    target_modules=["q_proj", "v_proj"],
+    lora_dropout=0.05,
+    bias="none",
+    task_type=TaskType.CAUSAL_LM,
+)
+
+model = get_peft_model(
+    base_model,
+    lora_config,
+)
+
+model.print_trainable_parameters()
+
+print("\n===== Trainable Parameters =====")
+
+for name, param in model.named_parameters():
+    if param.requires_grad:
+        print(
+            name,
+            param.shape,
+            param.numel(),
+        )
+
+q_proj = model.base_model.model.model.layers[0].self_attn.q_proj
+
+print("\n===== Model Structure =====")
+print(type(model))
+print(type(model.base_model))
+print(type(model.base_model.model))
+print(type(model.base_model.model.model))
+print(type(model.base_model.model.model.layers[0]))
+print(type(model.base_model.model.model.layers[0].self_attn))
+print(type(model.base_model.model.model.layers[0].self_attn.q_proj))
+
+print("\n===== q_proj after LoRA =====")
+print(q_proj)
+
+print(
+    "base weight requires_grad:",
+    q_proj.base_layer.weight.requires_grad,
+)
+
+print(
+    "LoRA A requires_grad:",
+    q_proj.lora_A["default"].weight.requires_grad,
+)
+
+print(
+    "LoRA B requires_grad:",
+    q_proj.lora_B["default"].weight.requires_grad,
+)
+
+print(
+    "A abs sum:",
+    q_proj.lora_A["default"].weight.abs().sum().item(),
+)
+
+print(
+    "B abs sum:",
+    q_proj.lora_B["default"].weight.abs().sum().item(),
+)
+
+print("\n===== first backward =====")
+
+optimizer = torch.optim.AdamW(
+    (
+        param
+        for param in model.parameters()
+        if param.requires_grad
+    ),
+    lr=1e-3,
+    weight_decay=0.0,
+)
+
+model.train()
+
+q_proj = (
+    model
+    .base_model
+    .model
+    .model
+    .layers[0]
+    .self_attn
+    .q_proj
+)
+
+base_weight = q_proj.base_layer.weight
+
+lora_A = q_proj.lora_A["default"].weight
+lora_B = q_proj.lora_B["default"].weight
+
+base_before = base_weight.detach().clone()
+A_before = lora_A.detach().clone()
+B_before = lora_B.detach().clone()
+
+optimizer.zero_grad()
+
+outputs = model(**batch)
+
+loss = outputs.loss
+
+print("loss:", loss.item())
+
+loss.backward()
+
+print("\n===== Gradients after first backward =====")
+
+print("base weight grad:")
+print(base_weight.grad)
+
+print(
+    "A grad abs sum:",
+    lora_A.grad.abs().sum().item()
+)
+
+print(
+    "B grad abs sum:",
+    lora_B.grad.abs().sum().item()
+)
+
+optimizer.step()
+
+print("\n===== Parameter changes after first step =====")
+
+print(
+    "base weight change:",
+    (base_weight - base_before).abs().sum().item()
+)
+
+print(
+    "A change:",
+    (lora_A - A_before).abs().sum().item()
+)
+
+print(
+    "B change:",
+    (lora_B - B_before).abs().sum().item()
+)
+
+print("\n===== second backward =====")
+
+optimizer.zero_grad()
+
+outputs = model(**batch)
+loss = outputs.loss
+
+loss.backward()
+
+print("\n===== Gradients after second backward =====")
+
+print(
+    "A grad abs sum:",
+    lora_A.grad.abs().sum().item()
+)
+
+print(
+    "B grad abs sum:",
+    lora_B.grad.abs().sum().item()
+)

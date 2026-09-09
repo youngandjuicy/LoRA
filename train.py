@@ -20,27 +20,43 @@ from data_process import (
 model_name = "Qwen/Qwen2.5-0.5B-Instruct"
 
 
+# =========================
+# Tokenizer
+# =========================
+
 tokenizer = AutoTokenizer.from_pretrained(
     model_name
 )
 
 
-dataset = build_dataset(
+# =========================
+# Dataset / DataLoader
+# =========================
+
+train_dataset = build_dataset(
     tokenizer
 )
 
-
 train_dataloader = build_dataloader(
-    dataset,
+    train_dataset,
     tokenizer,
     batch_size=2,
+    shuffle=True,
 )
 
+
+# =========================
+# Base Model
+# =========================
 
 base_model = AutoModelForCausalLM.from_pretrained(
     model_name
 )
 
+
+# =========================
+# LoRA
+# =========================
 
 lora_config = LoraConfig(
     r=8,
@@ -54,12 +70,15 @@ lora_config = LoraConfig(
     task_type=TaskType.CAUSAL_LM,
 )
 
-
 model = get_peft_model(
     base_model,
     lora_config,
 )
 
+
+# =========================
+# Device
+# =========================
 
 device = torch.device(
     "cuda"
@@ -68,3 +87,59 @@ device = torch.device(
 )
 
 model = model.to(device)
+
+
+# =========================
+# Optimizer
+# =========================
+
+optimizer = torch.optim.AdamW(
+    (
+        param
+        for param in model.parameters()
+        if param.requires_grad
+    ),
+    lr=1e-3,
+    weight_decay=0.0,
+)
+
+
+# =========================
+# Training
+# =========================
+
+num_epochs = 20
+
+model.train()
+
+for epoch in range(num_epochs):
+
+    total_loss = 0.0
+    num_steps = 0
+
+    for batch in train_dataloader:
+
+        batch = {
+            key: value.to(device)
+            for key, value in batch.items()
+        }
+
+        optimizer.zero_grad()
+
+        outputs = model(**batch)
+
+        loss = outputs.loss
+
+        loss.backward()
+
+        optimizer.step()
+
+        total_loss += loss.item()
+        num_steps += 1
+
+    avg_loss = total_loss / num_steps
+
+    print(
+        f"Epoch {epoch + 1:02d} "
+        f"| loss = {avg_loss:.4f}"
+    )

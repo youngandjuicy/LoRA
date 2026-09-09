@@ -143,3 +143,13 @@ for epoch in range(num_epochs):
         f"Epoch {epoch + 1:02d} "
         f"| loss = {avg_loss:.4f}"
     )
+
+output_dir = (
+    "/root/autodl-tmp/projects/LoRA/"
+    "outputs/qwen2.5-0.5b-ie-lora"
+)
+
+model.save_pretrained(output_dir)
+tokenizer.save_pretrained(output_dir)
+
+print(f"LoRA adapter saved to: {output_dir}")

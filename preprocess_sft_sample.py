@@ -3,23 +3,41 @@ from typing import Any
 from transformers import AutoTokenizer
 
 def build_messages(sample):
+
     instruction = (
-    "请从给定文本中抽取人名、时间和组织机构，"
-    "并严格按照 JSON 格式输出。"
+        "请从给定文本中抽取命名实体。"
+        "实体类型只能是以下10类之一："
+        "address、book、company、game、government、movie、"
+        "name、organization、position、scene。"
+        "请严格按照指定 JSON 格式输出，不要输出额外解释。"
     )
 
+    # 组装成 user 的 content，符合 Qwen 模板要求
     user_content = (
         f"{instruction}\n\n"
         f"文本：{sample['text']}"
     )
 
+    # 抽取出实体的 text 和 type，忽略 start 和 end
+    target_entities = [
+        {
+            "text": entity["text"],
+            "type": entity["type"],
+        }
+        for entity in sample["entities"]
+    ]
+
+    # 组装成 assistant 的 content，符合 Qwen 模板要求
     assistant_content = json.dumps(
-        {"entities": sample["entities"]},
+        {
+            "entities": target_entities
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
-    messages = [
+    # 组装成 messages 列表，符合 Qwen 模板要求
+    return [
         {
             "role": "user",
             "content": user_content,
@@ -29,8 +47,6 @@ def build_messages(sample):
             "content": assistant_content,
         },
     ]
-
-    return messages
 
 def preprocess_sft_sample(
     sample: dict[str, Any],

@@ -17,3 +17,16 @@ LoRA/
        配置 LoRA
        optimizer
        training loop
+
+# Day 2026-09-10 开始正式项目
+LoRA/
+├── data/
+│   └── raw/
+│       └── cluener/
+├── outputs/
+├── preprocess_sft_sample.py
+├── sft_data_collator.py
+├── data_process.py
+├── train.py
+├── inference.py
+└── ...

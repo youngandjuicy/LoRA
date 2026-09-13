@@ -9,34 +9,35 @@ def build_messages(sample):
         "实体类型只能是以下10类之一："
         "address、book、company、game、government、movie、"
         "name、organization、position、scene。"
-        "请严格按照指定 JSON 格式输出，不要输出额外解释。"
+        "每个实体必须包含 text、type、start、end 四个字段。"
+        "start 和 end 是实体在原文本中的字符索引，从 0 开始，"
+        "且 end 为闭区间。"
+        '输出格式必须为：{"entities":[...]}。'
+        "如果没有实体，则输出：{\"entities\":[]}。"
+        "不要输出任何额外解释。"
     )
 
-    # 组装成 user 的 content，符合 Qwen 模板要求
     user_content = (
         f"{instruction}\n\n"
         f"文本：{sample['text']}"
     )
 
-    # 抽取出实体的 text 和 type，忽略 start 和 end
     target_entities = [
         {
             "text": entity["text"],
             "type": entity["type"],
+            "start": entity["start"],
+            "end": entity["end"],
         }
         for entity in sample["entities"]
     ]
 
-    # 组装成 assistant 的 content，符合 Qwen 模板要求
     assistant_content = json.dumps(
-        {
-            "entities": target_entities
-        },
+        {"entities": target_entities},
         ensure_ascii=False,
         separators=(",", ":"),
     )
 
-    # 组装成 messages 列表，符合 Qwen 模板要求
     return [
         {
             "role": "user",

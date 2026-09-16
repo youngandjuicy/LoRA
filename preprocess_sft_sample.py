@@ -5,16 +5,18 @@ from transformers import AutoTokenizer
 def build_messages(sample):
 
     instruction = (
-        "请从给定文本中抽取命名实体。"
-        "实体类型只能是以下10类之一："
+        "从给定文本中抽取命名实体。"
+        "实体类型只能为："
         "address、book、company、game、government、movie、"
         "name、organization、position、scene。"
-        "每个实体必须包含 text、type、start、end 四个字段。"
-        "start 和 end 是实体在原文本中的字符索引，从 0 开始，"
-        "且 end 为闭区间。"
-        '输出格式必须为：{"entities":[...]}。'
-        "如果没有实体，则输出：{\"entities\":[]}。"
-        "不要输出任何额外解释。"
+        "输出必须是一个 JSON 对象，顶层唯一字段为 entities。"
+        "entities 是列表，每个元素必须且只能包含 "
+        "text、type、start、end 四个字段。"
+        "start 和 end 是实体在原始文本中的字符索引，从 0 开始，"
+        "end 为闭区间。"
+        "输出内容必须能够直接被 Python json.loads() 解析为字典。"
+        "输出的第一个字符必须是 {，最后一个字符必须是 }。"
+        '没有实体时输出 {"entities":[]}。'
     )
 
     user_content = (

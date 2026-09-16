@@ -364,7 +364,7 @@ def evaluate_dataset(
         consistency_correct
         / consistency_total
         if consistency_total > 0
-        else 0.0
+        else None
     )
 
     duplicate_sample_rate = (
@@ -418,10 +418,13 @@ def print_evaluation_result(result):
         f"{result['schema_valid_rate']:.4%}"
     )
 
-    print(
-        f"Span-text consistency: "
-        f"{result['span_text_consistency_rate']:.4%}"
-    )
+    if result["span_text_consistency_rate"] is None:
+        print("Span-text consistency: N/A")
+    else:
+        print(
+            "Span-text consistency: "
+            f"{result['span_text_consistency_rate']:.4%}"
+        )
 
     print(
         f"Duplicate sample rate: "

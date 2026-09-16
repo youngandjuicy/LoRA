@@ -1,3 +1,5 @@
+import os
+
 import json
 
 import torch
@@ -137,6 +139,11 @@ result = evaluate_dataset(
 )
 
 print_evaluation_result(result)
+
+os.makedirs(
+    os.path.dirname(OUTPUT_PATH),
+    exist_ok=True,
+)
 
 with open(
     OUTPUT_PATH,

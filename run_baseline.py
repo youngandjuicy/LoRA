@@ -4,6 +4,8 @@ import json
 
 import torch
 
+from tqdm import tqdm
+
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -21,10 +23,8 @@ from evaluate import (
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 OUTPUT_PATH = (
-    "outputs/base_validation_predictions.jsonl"
+    "outputs/base_validation_predictions_full.jsonl"
 )
-
-NUM_SAMPLES = 5
 
 
 device = torch.device(
@@ -98,12 +98,16 @@ dataset = load_cluener_dataset()
 
 validation_dataset = dataset["validation"]
 
+NUM_SAMPLES = len(validation_dataset)
 
 gold_samples = []
 raw_outputs = []
 
 
-for i in range(NUM_SAMPLES):
+for i in tqdm(
+    range(NUM_SAMPLES),
+    desc="Generating Predictions"
+):
 
     raw_sample = validation_dataset[i]
 
@@ -120,18 +124,19 @@ for i in range(NUM_SAMPLES):
     gold_samples.append(sample)
     raw_outputs.append(raw_output)
 
-    print("\n" + "=" * 70)
-    print(f"Sample {i}")
-    print("=" * 70)
+    if i < 5:
+        print("\n" + "=" * 70)
+        print(f"Sample {i}")
+        print("=" * 70)
 
-    print("TEXT:")
-    print(sample["text"])
+        print("TEXT:")
+        print(sample["text"])
 
-    print("\nGOLD:")
-    print(sample["entities"])
+        print("\nGOLD:")
+        print(sample["entities"])
 
-    print("\nPREDICTION:")
-    print(raw_output)
+        print("\nPREDICTION:")
+        print(raw_output)
 
 result = evaluate_dataset(
     gold_samples,

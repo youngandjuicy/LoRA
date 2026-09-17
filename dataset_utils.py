@@ -41,16 +41,3 @@ def normalize_cluener_sample(sample):
         "text": sample["text"],
         "entities": entities,
     }
-
-CLUENER_LABELS = [
-    "address",
-    "book",
-    "company",
-    "game",
-    "government",
-    "movie",
-    "name",
-    "organization",
-    "position",
-    "scene",
-]

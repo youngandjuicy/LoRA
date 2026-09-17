@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 
 
 CLUENER_LABELS = {
@@ -192,6 +193,50 @@ def compute_prf(
         "f1": f1,
     }
 
+# surface-only版本。该函数尝试解析 raw_output 字符串为 JSON，并检查其是否符合预期的 schema。
+# 它返回一个列表，包含每个实体的 (text, type) 对。如果解析失败或不符合 schema，则返回空列表。
+def extract_surface_type_pairs(raw_output):
+
+    try:
+        data = json.loads(raw_output)
+
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    if not isinstance(
+        data.get("entities"),
+        list,
+    ):
+        return []
+
+    pairs = []
+
+    for entity in data["entities"]:
+
+        if not isinstance(entity, dict):
+            continue
+
+        entity_text = entity.get("text")
+        entity_type = entity.get("type")
+
+        if not isinstance(entity_text, str):
+            continue
+
+        if not isinstance(entity_type, str):
+            continue
+
+        pairs.append(
+            (
+                entity_text,
+                entity_type,
+            )
+        )
+
+    return pairs
+
 def evaluate_dataset(
     gold_samples,
     raw_outputs,
@@ -202,6 +247,9 @@ def evaluate_dataset(
     total_tp = 0
     total_fp = 0
     total_fn = 0
+    surface_tp = 0
+    surface_fp = 0
+    surface_fn = 0
 
     json_valid_count = 0
     schema_valid_count = 0
@@ -261,6 +309,14 @@ def evaluate_dataset(
             for entity in gold_entities
         }
 
+        gold_surface_counter = Counter(
+            (
+                entity["text"],
+                entity["type"],
+            )
+            for entity in gold_entities
+        )
+
         if parsed["schema_valid"]:
 
             pred_keys = [
@@ -283,6 +339,12 @@ def evaluate_dataset(
 
             pred_set = set()
 
+        pred_surface_counter = Counter(
+            extract_surface_type_pairs(
+                raw_output
+            )
+        )
+
         tp_set = gold_set & pred_set
         fp_set = pred_set - gold_set
         fn_set = gold_set - pred_set
@@ -303,6 +365,27 @@ def evaluate_dataset(
 
         for start, end, label in fn_set:
             class_counts[label]["fn"] += 1
+
+        surface_sample_tp = sum(
+            (
+                gold_surface_counter
+                & pred_surface_counter
+            ).values()
+        )
+
+        surface_sample_fp = (
+            sum(pred_surface_counter.values())
+            - surface_sample_tp
+        )
+
+        surface_sample_fn = (
+            sum(gold_surface_counter.values())
+            - surface_sample_tp
+        )
+
+        surface_tp += surface_sample_tp
+        surface_fp += surface_sample_fp
+        surface_fn += surface_sample_fn
 
     # =============================
     # Micro metrics
@@ -372,6 +455,16 @@ def evaluate_dataset(
         / num_samples
     )
 
+    # =============================
+    # surface-type metrics
+    # =============================
+    
+    surface_type_metrics = compute_prf(
+        surface_tp,
+        surface_fp,
+        surface_fn,
+    )
+
     return {
         "num_samples": num_samples,
 
@@ -395,6 +488,8 @@ def evaluate_dataset(
         "macro_f1": macro_f1,
 
         "per_class": per_class,
+
+        "surface_type": surface_type_metrics,
     }
 
 def print_evaluation_result(result):
@@ -471,6 +566,23 @@ def print_evaluation_result(result):
             f"FP={metrics['fp']}  "
             f"FN={metrics['fn']}"
         )
+
+    print("\n===== Surface-Type Diagnostic =====")
+
+    print(
+        f"Precision: "
+        f"{result['surface_type']['precision']:.4f}"
+    )
+
+    print(
+        f"Recall: "
+        f"{result['surface_type']['recall']:.4f}"
+    )
+
+    print(
+        f"F1: "
+        f"{result['surface_type']['f1']:.4f}"
+    )
 
 if __name__ == "__main__":
 

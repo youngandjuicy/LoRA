@@ -114,39 +114,3 @@ def preprocess_sft_sample(
         "attention_mask": attention_mask,
         "labels": labels,
     }
-
-if __name__ == "__main__":
-
-    model_name = "Qwen/Qwen2.5-0.5B-Instruct"
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    sample = {
-    "text": "张明于2024年加入浙江大学人工智能研究所。",
-    "entities": [
-        {
-            "text": "张明",
-            "type": "person",
-        },
-        {
-            "text": "2024年",
-            "type": "time",
-        },
-        {
-            "text": "浙江大学人工智能研究所",
-            "type": "organization",
-        },
-    ],
-    }
-
-    features = preprocess_sft_sample(
-        sample=sample,
-        tokenizer=tokenizer,
-        max_length=512,
-    )
-
-    print(features.keys())
-    print(len(features["input_ids"]))
-    print(len(features["attention_mask"]))
-    print(len(features["labels"]))
-

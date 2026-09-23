@@ -52,7 +52,7 @@ Span-aware 输出格式：
     }
   ]
 }
-````
+```
 
 其中：
 
@@ -185,3 +185,61 @@ Evaluator:
 Saved-prediction evaluator:
 
 `evaluate_saved_predictions.py`
+
+
+# Experiment B1 — Fixed 3-shot Base Model
+
+## Setup
+
+模型：Qwen/Qwen2.5-0.5B-Instruct
+
+训练：无
+
+验证集样本数：1075
+
+Demonstrations：
+- train[1824]
+- train[4012]
+- train[2286]
+
+生成设置：
+- greedy decoding
+- do_sample=False
+- max_new_tokens=256
+
+## Results
+
+| Metric | Result |
+|---|---:|
+| JSON validity | 63.1628% |
+| Schema validity | 5.1163% |
+| Span-text consistency | 0.0000% |
+| Strict Micro Precision | 0.0000 |
+| Strict Micro Recall | 0.0000 |
+| Strict Micro F1 | 0.0000 |
+| Strict Macro F1 | 0.0000 |
+| Surface-Type Precision | 0.0560 |
+| Surface-Type Recall | 0.0686 |
+| Surface-Type F1 | 0.0617 |
+
+## Observation
+
+固定 3-shot 的上下文示例并没有提升
+Qwen2.5-0.5B-Instruct 在该任务上的表现。
+
+与 B0 相比，JSON 格式合法率、Schema 合法率以及
+Surface-Type F1 均有所下降。
+
+模型仍然频繁生成不属于 CLUENER 固定标签集合的语义类别，
+例如 `person`、`location`、`verb` 和 `team`。
+
+在 JSON 格式合法的预测结果中，大约 75% 的预测实体使用了
+十个合法 CLUENER 标签之外的实体类型。
+
+Span-text consistency 仍然为 0%，说明这些 demonstrations
+并没有使模型学会可靠地生成实体对应的绝对字符位置。
+
+该实验表明，在当前模型与提示词配置下，
+固定 3-shot in-context learning 不足以让
+Qwen2.5-0.5B-Instruct 学会任务特定的实体类别体系，
+也不足以使其稳定遵循 span-aware 的结构化输出协议。

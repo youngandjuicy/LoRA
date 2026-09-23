@@ -29,7 +29,7 @@ DEMO_INDICES = [
 
 OUTPUT_PATH = (
     "outputs/"
-    "base_validation_predictions_3shot.jsonl"
+    "fewshot_validation_predictions_full.jsonl"
 )
 
 
@@ -110,7 +110,7 @@ def generate_prediction(
         skip_special_tokens=True,
     )
 
-NUM_SAMPLES = 5
+NUM_SAMPLES = len(validation_dataset)
 
 gold_samples = []
 raw_outputs = []

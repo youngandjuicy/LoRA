@@ -243,3 +243,78 @@ Span-text consistency 仍然为 0%，说明这些 demonstrations
 固定 3-shot in-context learning 不足以让
 Qwen2.5-0.5B-Instruct 学会任务特定的实体类别体系，
 也不足以使其稳定遵循 span-aware 的结构化输出协议。
+
+
+# Experiment S1 — LoRA SFT Baseline
+
+## 实验设置
+
+模型：
+Qwen/Qwen2.5-0.5B-Instruct
+
+训练数据：
+9673 条 CLUENER project-train 样本
+
+验证集：
+1075 条样本
+
+LoRA 配置：
+- r = 8
+- alpha = 16
+- dropout = 0.05
+- target modules = q_proj, v_proj
+- 可训练参数量 = 540,672（占总参数量 0.1093%）
+
+训练配置：
+- epochs = 3
+- batch size = 8
+- learning rate = 2e-4
+- optimizer = AdamW
+- weight decay = 0
+- max length = 512
+- 使用 BF16 autocast
+- seed = 42
+
+## 训练损失
+
+| Epoch | Train Loss |
+|---|---:|
+| 1 | 0.197499 |
+| 2 | 0.121982 |
+| 3 | 0.101447 |
+
+## 验证集结果
+
+| Metric | Epoch 1 | Epoch 2 | Epoch 3 |
+|---|---:|---:|---:|
+| JSON validity | 99.9070% | 99.9070% | 100.0000% |
+| Schema validity | 94.1395% | 95.8140% | 95.9070% |
+| Span-text consistency | 35.3029% | 44.0412% | 50.8377% |
+| Strict Micro F1 | 0.2318 | 0.3016 | **0.3606** |
+| Strict Macro F1 | 0.2225 | 0.2951 | **0.3647** |
+| Surface-Type F1 | 0.6526 | 0.6771 | **0.6988** |
+
+最佳验证集 checkpoint：
+`checkpoints/s1_lora/epoch_3`
+
+## 实验观察
+
+与 zero-shot baseline 和固定 3-shot baseline 相比，
+LoRA SFT 显著提升了模型在各项任务相关能力上的表现。
+
+模型很快学会了遵循结构化输出要求：
+经过 1 个 epoch 后，JSON 合法率已经接近 100%，
+Schema 合法率也超过了 94%。
+
+Surface-Type F1 在第 1 个 epoch 后就达到了 0.6526，
+之后提升速度相对放缓，到第 3 个 epoch 时达到 0.6988。
+这说明实体识别能力以及 CLUENER 特定实体类别的映射关系，
+主要在训练早期就已经被模型学会。
+
+相比之下，Span-text consistency 从 35.30% 持续提升到 50.84%。
+因此，即使后期 Surface-Type F1 的提升幅度已经变小，
+Strict Span F1 仍然保持了较为明显的增长。
+
+这表明，在当前 span-aware 生成式任务设计下，
+绝对字符位置（absolute character offset）的生成
+仍然是模型当前最主要的性能瓶颈。

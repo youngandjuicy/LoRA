@@ -333,3 +333,35 @@ Strict Span F1 仍然保持了较为明显的增长。
 5、将实体分为只出现一次的实体和repeated mention实体，分别计算二者的精确率，发现重复实体的精确率稍低，但是由于重复实体比较少，因此说明不了什么
 
 6、经过上述5点的统计计算，初步确定下一步实验设计：LLM负责语义理解 + 类型判断 + 粗定位；Python负责精确字符串定位
+
+# A1 — Deterministic Span Alignment
+
+基于 checkpoint：
+S1 epoch 3
+
+方法：
+对于每一个预测实体，首先在原始文本中查找 predicted surface 的所有精确出现位置。
+
+如果该 surface 在原文中只出现一次，则直接使用该 occurrence 对应的精确 span。
+
+如果该 surface 在原文中出现多次，则使用模型原始生成的粗略 predicted span 作为位置 anchor，选择与其距离最近的 occurrence，并将该 occurrence 的 start/end 作为最终 span。
+
+该过程只使用原始输入文本和模型预测结果，不使用 gold annotation，也不重新训练模型。
+
+结果：
+
+| Metric | S1 | S1 + A1 |
+|---|---:|---:|
+| Schema validity | 95.9070% | 99.5349% |
+| Span-text consistency | 50.8377% | 99.3593% |
+| Strict Micro F1 | 0.3606 | 0.6970 |
+| Strict Macro F1 | 0.3647 | 0.6965 |
+| Surface-Type F1 | 0.6988 | 0.6988 |
+
+实验观察：
+
+Deterministic span alignment 几乎消除了 Surface-Type F1（0.6988）与 Strict Span F1（0.6970）之间的差距。
+
+这表明，在 S1 已经正确预测出实体 surface 和 type 的情况下，strict-span 指标上的大量额外性能损失主要来自 absolute character offset 的生成误差，而不是 surface/type 层面的错误。
+
+进一步的 span error analysis 表明，大多数 offset 错误属于较小范围的位置偏移，因此模型生成的粗略 span 仍然具有有效的位置信息。对于 repeated mention，可以利用该粗略 span 作为 anchor，在多个候选 occurrence 中进行消歧。

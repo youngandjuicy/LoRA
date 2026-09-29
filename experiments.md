@@ -365,3 +365,378 @@ Deterministic span alignment 几乎消除了 Surface-Type F1（0.6988）与 Stri
 这表明，在 S1 已经正确预测出实体 surface 和 type 的情况下，strict-span 指标上的大量额外性能损失主要来自 absolute character offset 的生成误差，而不是 surface/type 层面的错误。
 
 进一步的 span error analysis 表明，大多数 offset 错误属于较小范围的位置偏移，因此模型生成的粗略 span 仍然具有有效的位置信息。对于 repeated mention，可以利用该粗略 span 作为 anchor，在多个候选 occurrence 中进行消歧。
+
+
+# Experiment S2 — Occurrence-aware LoRA SFT
+
+## 实验动机
+
+S1 使用如下 span-aware 输出表示：
+
+```json
+{
+  "entities": [
+    {
+      "text": "...",
+      "type": "...",
+      "start": 0,
+      "end": 3
+    }
+  ]
+}
+```
+
+虽然 S1 已经能够较好地学习实体识别和类别判断
+（Surface-Type F1 = 0.6988），但直接生成绝对字符位置
+（absolute character offset）仍然是一个主要瓶颈：
+
+- Strict Micro F1 = 0.3606
+- Span-text consistency = 50.8377%
+
+A1 表明，在不改变 Surface-Type F1 的情况下，通过将模型预测出的实体 surface
+确定性地对齐回原始文本，可以将 Strict Micro F1 提升至 0.6970。
+
+这一结果说明，直接生成绝对字符位置可能并不适合当前的生成式语言模型。
+
+因此，S2 将 `(start, end)` 替换为 occurrence index：
+
+```json
+{
+  "entities": [
+    {
+      "text": "...",
+      "type": "...",
+      "occurrence": 2
+    }
+  ]
+}
+```
+
+`occurrence` 从 1 开始计数，表示 predicted surface 在原始文本中的第几次出现
+对应当前实体 mention。
+
+在推理阶段，`(text, occurrence)` 会通过确定性方法重新转换为
+`(start, end)`，因此最终评测仍然使用与 S1 完全相同的 strict span 指标。
+
+
+## 表示方式验证
+
+正式训练之前，首先验证 occurrence representation 是否能够实现无损转换：
+
+```text
+(start, end)
+    ->
+occurrence
+    ->
+(start, end)
+```
+
+### Train
+
+- Samples: 9673
+- Entities: 21567
+- Conversion failures: 0
+- Reconstruction failures: 0
+- Lossless reconstruction rate: 100%
+
+Occurrence 分布：
+
+| Occurrence | Count |
+|---|---:|
+| 1 | 20798 |
+| 2 | 732 |
+| 3 | 37 |
+
+### Validation
+
+- Samples: 1075
+- Entities: 2404
+- Conversion failures: 0
+- Reconstruction failures: 0
+- Lossless reconstruction rate: 100%
+
+Occurrence 分布：
+
+| Occurrence | Count |
+|---|---:|
+| 1 | 2312 |
+| 2 | 88 |
+| 3 | 4 |
+
+因此，在当前 project train 和 validation split 上，
+occurrence-aware representation 能够完整保留 mention-level 信息，
+不存在由表示方式转换本身造成的信息损失。
+
+
+## 实验设置
+
+模型：
+
+Qwen/Qwen2.5-0.5B-Instruct
+
+训练数据：
+
+9673 条 CLUENER project-train 样本
+
+验证集：
+
+1075 条样本
+
+LoRA：
+
+- r = 8
+- alpha = 16
+- dropout = 0.05
+- target modules = q_proj, v_proj
+- 可训练参数量 = 540,672（0.1093%）
+
+训练：
+
+- epochs = 3
+- batch size = 8
+- learning rate = 2e-4
+- optimizer = AdamW
+- weight decay = 0
+- max length = 512
+- BF16 autocast
+- seed = 42
+
+所有训练超参数均与 S1 保持一致。
+
+S2 相比 S1 的主要实验变量是输出表示方式：
+
+S1：
+
+`text / type / start / end`
+
+S2：
+
+`text / type / occurrence`
+
+
+## 训练损失
+
+| Epoch | Train Loss |
+|---|---:|
+| 1 | 0.096001 |
+| 2 | 0.060123 |
+| 3 | 0.048798 |
+
+由于 S1 与 S2 的 target token sequence 不同，因此两种表示方式下的
+loss 绝对值不能直接进行横向比较。
+
+
+## 验证集结果
+
+模型生成 occurrence-aware prediction 后，
+首先通过确定性方法将其重新构造为标准的
+`(text, type, start, end)` 实体，
+随后使用与 S1 完全相同的 strict evaluator 进行评测。
+
+| Metric | Epoch 1 | Epoch 2 | Epoch 3 |
+|---|---:|---:|---:|
+| JSON validity | 100.0000% | 100.0000% | 100.0000% |
+| Schema validity | 97.4884% | 98.5116% | **98.6977%** |
+| Span-text consistency | 100.0000% | 100.0000% | 100.0000% |
+| Strict Micro F1 | 0.6807 | 0.7069 | **0.7153** |
+| Strict Macro F1 | 0.6762 | 0.7074 | **0.7139** |
+| Surface-Type F1 | 0.6847 | 0.7098 | **0.7184** |
+
+最佳 validation checkpoint：
+
+`checkpoints/s2_occurrence_lora/epoch_3`
+
+
+## 与 S1 的对比
+
+| Experiment | Representation | Strict Micro F1 | Surface-Type F1 |
+|---|---|---:|---:|
+| S1 epoch 3 | absolute span | 0.3606 | 0.6988 |
+| S1 + A1 | absolute span + deterministic alignment | 0.6970 | 0.6988 |
+| S2 epoch 3 | occurrence + deterministic reconstruction | **0.7153** | **0.7184** |
+
+与直接生成 absolute span 相比，
+occurrence-aware training 显著提升了 strict span performance：
+
+`0.3606 -> 0.7153`
+
+S2 也略高于 S1 + A1：
+
+`0.6970 -> 0.7153`
+
+更值得注意的是，Surface-Type F1 同样有所提升：
+
+`0.6988 -> 0.7184`
+
+由于 deterministic span reconstruction 本身不会改善 Surface-Type F1，
+因此这一现象说明：去除 absolute-offset generation 的负担后，
+模型可能也能够更有效地学习实体发现和类别判断。
+
+不过，目前该结果只来自一个 training seed，
+因此应将其视为当前实验配置下的观察结果，而不是一般性结论。
+
+
+## Occurrence 分布诊断
+
+Validation gold occurrence 分布：
+
+| Occurrence | Count |
+|---|---:|
+| 1 | 2312 |
+| 2 | 88 |
+| 3 | 4 |
+
+S2 epoch 3 的 predicted occurrence 分布：
+
+| Occurrence | Count |
+|---|---:|
+| 1 | 2136 |
+| 2 | 33 |
+| 3 | 1 |
+
+模型明显偏向预测 `occurrence=1`。
+
+Gold 中的 non-first mentions：
+
+`92`
+
+模型预测出的 non-first mentions：
+
+`30`
+
+这说明模型对后续重复 mention 存在明显的漏预测现象。
+
+
+## Repeated-Surface 诊断
+
+### Repeated-surface mentions 的端到端结果
+
+- TP = 96
+- FP = 35
+- FN = 94
+- Precision = 0.7328
+- Recall = 0.5053
+- F1 = 0.5981
+
+### 在 Surface-Type 已正确匹配条件下的 Occurrence 准确率
+
+在 `(text, type)` 已经正确匹配的 repeated-surface mentions 中：
+
+- Surface-Type matched = 100
+- Correct occurrence = 96
+- Conditional occurrence accuracy = 0.9600
+
+这说明，当模型已经成功生成正确的 repeated mention 时，
+occurrence number 本身通常能够被正确预测。
+
+因此，当前 repeated mention 的主要错误并不是将 occurrence 1 与 occurrence 2
+相互混淆，而是部分 repeated mentions 根本没有被模型生成出来。
+
+
+### Non-first occurrences
+
+对于 gold 中满足 `occurrence > 1` 的 mentions：
+
+- Gold = 92
+- Predicted = 30
+- Exact TP = 21
+- Precision = 0.7000
+- Recall = 0.2283
+
+模型在生成后续 occurrence 时表现较为保守：
+一旦模型预测了 non-first occurrence，其 precision 尚可，
+但 recall 很低，说明大量后续 repeated mentions 被漏掉。
+
+
+## Repeated Group Analysis
+
+将 repeated `(surface, type)` group 分为两类：
+
+- `ALL`：该 surface 在原始文本中的所有 occurrence 都被标注为实体。
+- `PARTIAL`：只有部分 occurrence 被标注为实体。
+
+### ALL
+
+- Groups = 71
+- Exact group matches = 20
+- Exact group accuracy = 0.2817
+- Gold mentions = 143
+- Predicted mentions = 77
+- TP = 77
+- Precision = 1.0000
+- Recall = 0.5385
+- F1 = 0.7000
+
+这些 gold groups 平均包含约：
+
+`143 / 71 = 2.01`
+
+个 mention，而模型平均只预测：
+
+`77 / 71 = 1.08`
+
+个 mention。
+
+因此，即使在所有 repeated occurrences 都被一致标注的 `ALL` 情形下，
+模型仍然经常只生成一个 entity object，而没有生成全部需要的 mentions。
+
+
+### PARTIAL
+
+- Groups = 44
+- Exact group matches = 14
+- Exact group accuracy = 0.3182
+- Gold mentions = 47
+- Predicted mentions = 26
+- TP = 19
+- Precision = 0.7308
+- Recall = 0.4043
+- F1 = 0.5205
+
+部分标注确实会进一步增加 repeated-mention 任务的难度，
+但它并不能完全解释当前较低的 recall，
+因为在所有 occurrence 都被完整标注的 `ALL` 子集中，
+recall 也只有 0.5385。
+
+
+## 主要实验观察
+
+S2 的实验结果支持在生成式 NER 中使用 occurrence-aware output representation。
+
+将 absolute character offset 替换为 occurrence index 后，
+避免了模型直接进行精确字符计数，
+Strict Micro F1 从 0.3606 提升到 0.7153。
+
+不过，进一步的 error analysis 暴露出了新的限制。
+
+当模型已经成功生成正确的 repeated surface-type mention 时，
+其 occurrence number 通常能够预测正确，
+条件 occurrence accuracy 达到 96%。
+
+但是，模型经常没有为后续 occurrence 生成额外的 entity object。
+
+因此，S2 当前 repeated-mention 场景下最主要的问题是：
+
+`repeated-mention under-generation`
+
+而不是：
+
+`occurrence-index confusion`
+
+这一结果进一步启发我们考虑 grouped occurrence representation：
+对于同一个 `(text, type)`，将所有被标注的 occurrence index
+放在同一个 entity object 中，例如：
+
+```json
+{
+  "text": "费内巴切",
+  "type": "organization",
+  "occurrences": [1, 2]
+}
+```
+
+这种表示方式可能在保留 mention identity 的同时，
+避免要求模型生成多个内容几乎完全相同的 JSON entity object。
+
+项目的 official test split 仍保持封存，尚未使用。
+

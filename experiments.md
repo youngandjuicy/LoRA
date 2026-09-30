@@ -740,3 +740,184 @@ Strict Micro F1 从 0.3606 提升到 0.7153。
 
 项目的 official test split 仍保持封存，尚未使用。
 
+
+# Experiment S3 — Grouped Occurrence Representation
+
+## 实验动机
+
+S2 将每一个被标注的 mention 表示为一个独立的 entity object：
+
+```json
+{"text":"A","type":"organization","occurrence":1}
+{"text":"A","type":"organization","occurrence":2}
+```
+
+Error analysis 表明，当模型已经成功生成一个 repeated mention 时，
+其 occurrence index 通常能够预测正确
+（conditional accuracy = 96%），
+但模型经常无法继续生成后续的 repeated mentions。
+
+因此，S3 将相同 `(text, type)` 下所有被标注的 occurrence
+合并到同一个 object 中：
+
+```json
+{
+  "text":"A",
+  "type":"organization",
+  "occurrences":[1,2]
+}
+```
+
+这一设计的目标是减少 repeated object 的 under-generation，
+同时完整保留 mention-level 信息。
+
+
+## 表示方式验证
+
+Grouped representation 在 project train 和 validation split 上均可实现无损转换。
+
+### Train
+
+- Samples: 9673
+- Mentions: 21567
+- Grouped entity objects: 21009
+- Repeated groups: 547
+- Reconstruction failures: 0
+- Lossless reconstruction rate: 100%
+
+Group size 分布：
+
+| Mentions per group | Count |
+|---|---:|
+| 1 | 20462 |
+| 2 | 536 |
+| 3 | 11 |
+
+### Validation
+
+- Samples: 1075
+- Mentions: 2404
+- Grouped entity objects: 2329
+- Repeated groups: 74
+- Reconstruction failures: 0
+- Lossless reconstruction rate: 100%
+
+
+## 实验设置
+
+所有训练超参数均与 S2 保持一致。
+
+唯一具有实质性的改动是输出表示方式：
+
+S2：
+
+`text / type / occurrence`
+
+S3：
+
+`text / type / occurrences[]`
+
+
+## 训练损失
+
+| Epoch | Train Loss |
+|---|---:|
+| 1 | 0.097146 |
+| 2 | 0.060820 |
+| 3 | 0.049225 |
+
+
+## 验证集结果
+
+| Metric | Epoch 1 | Epoch 2 | Epoch 3 |
+|---|---:|---:|---:|
+| JSON validity | 99.9070% | 100.0000% | 100.0000% |
+| Schema validity | 97.7674% | 98.9767% | **99.3488%** |
+| Span-text consistency | 100.0000% | 100.0000% | 100.0000% |
+| Strict Micro F1 | 0.6627 | 0.6698 | **0.7153** |
+| Strict Macro F1 | 0.6573 | 0.6688 | **0.7149** |
+| Surface-Type F1 | 0.6672 | 0.6722 | **0.7171** |
+
+最佳 checkpoint：
+
+`checkpoints/s3_grouped_occurrence_lora/epoch_3`
+
+
+## 与 S2 的对比
+
+| Experiment | Strict P | Strict R | Strict F1 | Surface-Type F1 |
+|---|---:|---:|---:|---:|
+| S2 | 0.7626 | **0.6735** | **0.7153** | **0.7184** |
+| S3 | **0.7777** | 0.6622 | **0.7153** | 0.7171 |
+
+整体性能基本没有变化。
+
+
+## Repeated-Group Analysis
+
+### Fully annotated repeated groups（ALL）
+
+| Metric | S2 | S3 |
+|---|---:|---:|
+| Exact group accuracy | 0.2817 | **0.3944** |
+| Predicted mentions | 77 | **84** |
+| Recall | 0.5385 | **0.5874** |
+| F1 | 0.7000 | **0.7401** |
+
+在 fully annotated repeated groups 上，
+grouped representation 带来了明显改善。
+
+这一结果支持此前的假设：
+要求模型生成多个几乎完全相同的 entity object，
+确实会加重 repeated-mention under-generation。
+
+不过，模型平均每个 group 预测出的 mention 数仅从约 1.08
+提升到约 1.18，
+而 gold 平均约为 2.01。
+
+因此，即使采用 grouped representation，
+仍然存在明显的 under-generation。
+
+
+### Partially annotated repeated groups（PARTIAL）
+
+| Metric | S2 | S3 |
+|---|---:|---:|
+| Exact group accuracy | **0.3182** | 0.2273 |
+| Precision | **0.7308** | 0.6333 |
+| Recall | 0.4043 | 0.4043 |
+| F1 | **0.5205** | 0.4935 |
+
+在 partially annotated repeated surfaces 上，
+S3 生成了更多 predicted mentions，
+但并没有带来更多 true positives，
+因此 precision 出现下降。
+
+这一结果说明，
+grouped occurrence prediction 与数据集中的 partial-annotation behavior
+之间存在一定冲突：
+
+当 repeated mentions 都被完整标注时，
+鼓励模型输出多个 occurrences 是有利的；
+
+但当只有其中部分 occurrences 被标注时，
+这种倾向可能导致 over-generation。
+
+
+## 结论
+
+S3 对 grouped-occurrence hypothesis 提供了部分支持。
+
+Grouped representation 能够在 fully annotated repeated groups 上
+缓解 repeated-object under-generation，
+但并没有彻底解决这一问题。
+
+与此同时，它在 partially annotated repeated groups 上
+增加了 false positives。
+
+因此，S3 在目标 repeated-group 子集上的改进，
+并没有进一步转化为整体 validation F1 的提升。
+
+综合来看，S2 仍然是当前更简单、直接的主要 occurrence-aware formulation；
+而 S3 可以作为一个 ablation experiment，
+用于展示 grouped repeated mentions 所带来的收益及其局限性。

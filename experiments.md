@@ -753,12 +753,15 @@ S2 将每一个被标注的 mention 表示为一个独立的 entity object：
 ```
 
 Error analysis 表明，当模型已经成功生成一个 repeated mention 时，
-其 occurrence index 通常能够预测正确
-（conditional accuracy = 96%），
-但模型经常无法继续生成后续的 repeated mentions。
+其 occurrence index 通常能够预测正确，
+conditional occurrence accuracy 达到 96%。
 
-因此，S3 将相同 `(text, type)` 下所有被标注的 occurrence
-合并到同一个 object 中：
+但是，模型经常无法继续生成同一 `(text, type)` 下后续的 repeated mentions。
+因此，S2 的主要 repeated-mention 问题并不是 occurrence index 预测错误，
+而是 repeated mention 本身没有被生成。
+
+S3 因此进一步修改输出表示方式，将相同 `(text, type)` 下
+所有被标注的 occurrences 合并到同一个 entity object 中：
 
 ```json
 {
@@ -768,13 +771,18 @@ Error analysis 表明，当模型已经成功生成一个 repeated mention 时�
 }
 ```
 
-这一设计的目标是减少 repeated object 的 under-generation，
-同时完整保留 mention-level 信息。
+这一设计的目标是减少生成多个近乎重复 entity objects
+所带来的 repeated-mention under-generation，
+同时继续完整保留 mention-level 信息。
 
 
 ## 表示方式验证
 
-Grouped representation 在 project train 和 validation split 上均可实现无损转换。
+在训练之前，对 grouped occurrence representation 进行了
+`span -> grouped occurrence -> span` 的无损重构验证。
+
+Grouped representation 在 project train 和 validation split 上
+均可以实现 100% 无损转换。
 
 ### Train
 
@@ -793,6 +801,12 @@ Group size 分布：
 | 2 | 536 |
 | 3 | 11 |
 
+原始 21567 个 mention 被压缩为 21009 个 grouped entity objects。
+
+其中绝大多数 group 仍然只包含一个 mention，
+因此 S3 实际上只修改了 repeated mention 对应的少量训练目标。
+
+
 ### Validation
 
 - Samples: 1075
@@ -802,10 +816,46 @@ Group size 分布：
 - Reconstruction failures: 0
 - Lossless reconstruction rate: 100%
 
+Group size 分布：
+
+| Mentions per group | Count |
+|---|---:|
+| 1 | 2255 |
+| 2 | 73 |
+| 3 | 1 |
+
+因此，S3 并没有改变任务本身的 mention-level 信息，
+而只是改变 repeated mentions 的序列化方式。
+
 
 ## 实验设置
 
 所有训练超参数均与 S2 保持一致。
+
+模型：
+
+`Qwen/Qwen2.5-0.5B-Instruct`
+
+LoRA：
+
+- r = 8
+- alpha = 16
+- dropout = 0.05
+- target modules = `q_proj`, `v_proj`
+- trainable parameters = 540,672
+
+训练设置：
+
+- train samples = 9673
+- validation samples = 1075
+- epochs = 3
+- batch size = 8
+- learning rate = 2e-4
+- optimizer = AdamW
+- weight decay = 0
+- max length = 512
+- BF16 autocast
+- seed = 42
 
 唯一具有实质性的改动是输出表示方式：
 
@@ -826,8 +876,19 @@ S3：
 | 2 | 0.060820 |
 | 3 | 0.049225 |
 
+训练损失持续下降，未观察到异常。
+
+由于 S2 与 S3 的 target token sequence 不同，
+二者的 absolute training loss 不应直接进行数值比较。
+
 
 ## 验证集结果
+
+Grouped occurrence output 在推理后被确定性重构为标准的：
+
+`text / type / start / end`
+
+随后继续使用与 S1、S2 相同的 strict evaluator 进行评测。
 
 | Metric | Epoch 1 | Epoch 2 | Epoch 3 |
 |---|---:|---:|---:|
@@ -843,19 +904,68 @@ S3：
 `checkpoints/s3_grouped_occurrence_lora/epoch_3`
 
 
-## 与 S2 的对比
+## 与 S2 的整体对比
 
 | Experiment | Strict P | Strict R | Strict F1 | Surface-Type F1 |
 |---|---:|---:|---:|---:|
 | S2 | 0.7626 | **0.6735** | **0.7153** | **0.7184** |
 | S3 | **0.7777** | 0.6622 | **0.7153** | 0.7171 |
 
-整体性能基本没有变化。
+S2 和 S3 的整体 Strict Micro F1 完全相同，均为 0.7153。
+
+相比 S2，S3 的 precision 更高，但 recall 略低：
+
+`P: 0.7626 -> 0.7777`
+
+`R: 0.6735 -> 0.6622`
+
+Surface-Type F1 也基本保持不变：
+
+`0.7184 -> 0.7171`
+
+因此，仅从整体 validation 指标来看，
+S3 并没有带来进一步提升。
+
+不过，S3 的设计目标本身就是针对 repeated mentions，
+而 validation 中 grouped representation 实际只合并了 75 个 mention。
+因此，仅使用 overall F1 不足以判断 S3 是否实现了其设计目标。
 
 
 ## Repeated-Group Analysis
 
-### Fully annotated repeated groups（ALL）
+为了进一步分析 repeated mentions，
+将 validation 中的 repeated-surface groups 按如下规则划分：
+
+### ALL
+
+对于某个 `(surface, type)` group，
+该 surface 在原文中的所有字符串 occurrence
+都对应 gold 中该 type 的 mention。
+
+### PARTIAL
+
+对于某个 `(surface, type)` group，
+只有部分字符串 occurrence
+对应 gold 中该 type 的 mention。
+
+需要注意的是：
+
+`PARTIAL` 只是一个基于字符串 occurrence 的操作性定义，
+并不意味着这些样本一定存在漏标或 annotation noise。
+
+后续人工审计表明，
+PARTIAL group 可能同时包含：
+
+1. 真正的 annotation omission；
+2. 同一 surface 在不同位置具有不同语义；
+3. surface 只是更长实体或词语的一部分；
+4. mention boundary 不同；
+5. 无法明确判断的模糊情况。
+
+因此，PARTIAL 不能直接等同于 noisy-label subset。
+
+
+### ALL repeated groups
 
 | Metric | S2 | S3 |
 |---|---:|---:|
@@ -864,22 +974,58 @@ S3：
 | Recall | 0.5385 | **0.5874** |
 | F1 | 0.7000 | **0.7401** |
 
-在 fully annotated repeated groups 上，
-grouped representation 带来了明显改善。
+在 ALL repeated groups 上，
+S3 带来了较为明确的改善。
+
+Exact group accuracy：
+
+`0.2817 -> 0.3944`
+
+Recall：
+
+`0.5385 -> 0.5874`
+
+F1：
+
+`0.7000 -> 0.7401`
+
+Gold 中平均每个 group 包含：
+
+`143 / 71 ≈ 2.01`
+
+个 mention。
+
+S2 平均每个 group 预测：
+
+`77 / 71 ≈ 1.08`
+
+个 mention。
+
+S3 提升为：
+
+`84 / 71 ≈ 1.18`
+
+个 mention。
+
+因此，将多个 repeated mentions 合并为一个
+`occurrences[]` list，
+确实使模型更容易生成后续 occurrences。
 
 这一结果支持此前的假设：
-要求模型生成多个几乎完全相同的 entity object，
-确实会加重 repeated-mention under-generation。
 
-不过，模型平均每个 group 预测出的 mention 数仅从约 1.08
-提升到约 1.18，
-而 gold 平均约为 2.01。
+要求模型生成多个几乎完全相同的 entity objects，
+会加重 repeated-mention under-generation。
 
-因此，即使采用 grouped representation，
-仍然存在明显的 under-generation。
+不过，S3 平均每组仍然只生成约 1.18 个 mention，
+距离 gold 的约 2.01 个仍有明显差距。
+
+因此，grouped representation 只能认为
+**缓解了（alleviated）**
+repeated-mention under-generation，
+而不能认为已经解决这一问题。
 
 
-### Partially annotated repeated groups（PARTIAL）
+### PARTIAL repeated groups
 
 | Metric | S2 | S3 |
 |---|---:|---:|
@@ -888,36 +1034,201 @@ grouped representation 带来了明显改善。
 | Recall | 0.4043 | 0.4043 |
 | F1 | **0.5205** | 0.4935 |
 
-在 partially annotated repeated surfaces 上，
-S3 生成了更多 predicted mentions，
-但并没有带来更多 true positives，
-因此 precision 出现下降。
+在 PARTIAL groups 上，
+S3 生成了更多 predicted occurrences：
 
-这一结果说明，
-grouped occurrence prediction 与数据集中的 partial-annotation behavior
-之间存在一定冲突：
+S2：
 
-当 repeated mentions 都被完整标注时，
-鼓励模型输出多个 occurrences 是有利的；
+- Predicted mentions = 26
+- TP = 19
 
-但当只有其中部分 occurrences 被标注时，
-这种倾向可能导致 over-generation。
+S3：
+
+- Predicted mentions = 30
+- TP = 19
+
+按照 benchmark gold 计算，
+新增预测没有增加 TP，
+因此 precision 从 0.7308 下降到 0.6333。
+
+
+## PARTIAL Groups 人工审计
+
+为了判断 PARTIAL subset 是否可以直接理解为 annotation noise，
+对 validation 中全部 44 个 PARTIAL repeated groups
+进行了人工语义审计。
+
+人工将其分为三类：
+
+### A — likely missing annotation / annotation noise
+
+未标注的 occurrence 在上下文中仍明显属于相同实体类型，
+很可能属于漏标。
+
+### B — legitimate partial annotation
+
+虽然字符串 surface 再次出现，
+但该 occurrence 在语义或 mention boundary 上
+并不应该被标为当前 type。
+
+常见情况包括：
+
+- 同一 surface 在不同位置具有不同语义；
+- surface 是更长实体的一部分；
+- surface 是普通词或其他实体中的子串。
+
+### C — ambiguous
+
+仅根据当前文本无法可靠判断是否应该标注。
+
+人工审计结果：
+
+| Category | Groups | Ratio |
+|---|---:|---:|
+| A — likely missing annotation | 14 | 31.8% |
+| B — legitimate partial | 22 | 50.0% |
+| C — ambiguous | 8 | 18.2% |
+
+这一结果说明：
+
+PARTIAL subset 中确实存在一定数量疑似漏标的情况，
+但 PARTIAL 并不能整体视为错误数据。
+
+实际上，一半的 PARTIAL groups 可以较明确地解释为
+合理的 partial annotation。
+
+
+## 对 S3 PARTIAL False Positives 的进一步检查
+
+S3 在 PARTIAL groups 中：
+
+- Predicted mentions = 30
+- TP = 19
+
+因此 benchmark 将其中 11 个 occurrence 判定为 false positives。
+
+进一步结合人工审计后发现：
+
+| 所属人工类别 | S3 extra occurrences |
+|---|---:|
+| A — likely missing annotation | 7 |
+| B — legitimate partial | 2 |
+| C — ambiguous | 2 |
+
+也就是说，S3 的 11 个 benchmark false positives 中，
+有 7 个发生在人工判断为 likely missing annotation 的 groups 中。
+
+因此，S3 在 PARTIAL subset 上观察到的 precision drop
+不能全部解释为模型真实的 over-generation。
+
+其中一部分预测可能在语义上是合理的，
+只是因为 gold annotation 不完整而被 benchmark 计为 false positive。
+
+需要强调的是：
+
+这一人工审计只能作为误差分析，
+不能替代官方 gold，也不应直接修改 benchmark 分数。
+
+因此，S3 的官方 PARTIAL precision 仍然保持为 0.6333，
+但在解释该结果时需要考虑 annotation incompleteness。
+
+
+## 对 ALL / PARTIAL 划分的重新理解
+
+最初的分析容易将：
+
+`ALL`
+
+理解为“标注完整”，将：
+
+`PARTIAL`
+
+理解为“存在漏标”。
+
+人工审计表明，这种理解过于简单。
+
+更准确地说：
+
+### ALL
+
+所有匹配到的字符串 occurrence
+都恰好对应当前 `(surface, type)` 的 gold mentions。
+
+因此，该 subset 中字符串 occurrence 与 mention identity
+之间关系较为干净。
+
+### PARTIAL
+
+字符串 occurrence 与 gold mention 并非一一对应。
+
+造成这一现象的原因可能包括：
+
+- annotation omission；
+- semantic ambiguity；
+- substring overlap；
+- mention-boundary difference。
+
+因此，ALL subset 是评估 grouped representation
+是否缓解 repeated-object under-generation
+相对更干净的诊断集合。
+
+而 PARTIAL subset 更适合用于研究
+representation 与数据标注特性之间的相互作用，
+不应被简单解释为模型错误。
 
 
 ## 结论
 
-S3 对 grouped-occurrence hypothesis 提供了部分支持。
+S3 对 grouped-occurrence hypothesis 提供了明确但有限的支持。
 
-Grouped representation 能够在 fully annotated repeated groups 上
-缓解 repeated-object under-generation，
-但并没有彻底解决这一问题。
+在整体 validation 上：
 
-与此同时，它在 partially annotated repeated groups 上
-增加了 false positives。
+`Strict Micro F1: 0.7153 -> 0.7153`
 
-因此，S3 在目标 repeated-group 子集上的改进，
-并没有进一步转化为整体 validation F1 的提升。
+S3 并没有进一步超过 S2。
 
-综合来看，S2 仍然是当前更简单、直接的主要 occurrence-aware formulation；
-而 S3 可以作为一个 ablation experiment，
-用于展示 grouped repeated mentions 所带来的收益及其局限性。
+但是，在更直接对应 S3 设计目标的 ALL repeated-group subset 上，
+S3 表现出一致改善：
+
+- Exact group accuracy: `0.2817 -> 0.3944`
+- Recall: `0.5385 -> 0.5874`
+- F1: `0.7000 -> 0.7401`
+- Predicted mentions: `77 -> 84`
+
+因此，有证据支持：
+
+将相同 `(text, type)` 下的 repeated mentions
+合并为一个 `occurrences[]` list，
+能够缓解由于重复生成近似 entity objects
+造成的 repeated-mention under-generation。
+
+不过，这一问题并没有被彻底解决。
+
+另一方面，S3 在 PARTIAL repeated groups 上的
+benchmark precision 出现下降。
+
+人工审计进一步表明，
+PARTIAL subset 本身并不等价于 annotation noise：
+
+- 31.8% 的 groups 疑似存在漏标；
+- 50.0% 可以解释为合理的 partial annotation；
+- 18.2% 无法可靠判断。
+
+同时，S3 在 PARTIAL subset 中新增的 11 个 benchmark false positives 中，
+有 7 个发生在疑似漏标的 groups 上。
+
+因此，PARTIAL subset 上观察到的性能下降
+不能全部归因于模型真实的 over-generation，
+其中一部分可能来自 benchmark annotation incompleteness。
+
+综合来看：
+
+S3 没有提升整体 validation F1，
+但成功验证了 grouped representation
+对 fully matched repeated-surface cases 的针对性收益。
+
+S2 仍然是当前更简单、直接的主要 occurrence-aware formulation；
+S3 则作为一个重要的 representation ablation，
+展示了 grouped repeated mentions 的收益，
+同时也暴露了 repeated-surface evaluation
+与实际 mention identity、数据标注完整性之间的复杂关系。

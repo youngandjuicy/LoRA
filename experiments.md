@@ -1051,6 +1051,62 @@ S3：
 新增预测没有增加 TP，
 因此 precision 从 0.7308 下降到 0.6333。
 
+## Paired Bootstrap 不确定性分析
+
+由于 ALL repeated-group subset 仅包含 71 个 groups，
+为了评估 S2 与 S3 局部性能差异对 validation sampling 的敏感程度，
+进一步进行了 10,000 次 paired bootstrap。
+
+每次 bootstrap 对相同 evaluation units 进行有放回重采样，
+并在同一批抽样单位上同时重新计算 S2 和 S3 的指标，
+记录：
+
+`Delta = Metric(S3) - Metric(S2)`。
+
+
+### Overall Strict Micro F1
+
+Observed:
+
+`Delta F1 = +0.000081`
+
+95% percentile bootstrap CI:
+
+`[-0.012675, 0.012472]`
+
+Bootstrap proportion with `Delta > 0`:
+
+`0.4974`
+
+该结果表明，S2 与 S3 的整体 Strict Micro F1
+在当前 validation 上没有可辨别的稳定差异。
+
+
+### ALL repeated groups
+
+| Metric | Observed Delta (S3-S2) | 95% Bootstrap CI | P(Delta > 0) |
+|---|---:|---:|---:|
+| Recall | +0.048951 | [-0.028169, 0.126761] | 0.8658 |
+| F1 | +0.040088 | [-0.024351, 0.104987] | 0.8658 |
+| Exact Group Accuracy | +0.112676 | [-0.028169, 0.253521] | 0.9348 |
+
+S3 在三个 repeated-group 指标上均表现出正向 point estimate，
+并且多数 bootstrap replication 中 S3 优于 S2。
+
+其中 Exact Group Accuracy 的正向比例最高，为 93.48%。
+
+但是，三个指标的 95% bootstrap confidence interval 均跨过 0。
+
+因此，目前更合适的解释是：
+
+S3 在 seed=42 的 ALL repeated-group subset 上表现出
+较为一致的改善趋势，
+但由于 subset 规模较小，
+该局部收益仍具有较大的 evaluation uncertainty，
+尚不能仅根据当前 validation 数据认为这一优势已经稳定成立。
+
+后续将通过额外 training seeds
+进一步检查该趋势是否能够在不同优化随机性下重复出现。
 
 ## PARTIAL Groups 人工审计
 

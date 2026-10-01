@@ -1,5 +1,6 @@
 import os
 import random
+import argparse
 
 import torch
 
@@ -33,17 +34,32 @@ from sft_data_collator import (
 
 
 # ============================================================
+# Arguments
+# ============================================================
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument(
+    "--seed",
+    type=int,
+    required=True,
+)
+
+args = parser.parse_args()
+
+TRAIN_SEED = args.seed
+
+
+# ============================================================
 # Config
 # ============================================================
 
 MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
 
 OUTPUT_ROOT = (
-    "checkpoints/"
-    "s3_grouped_occurrence_lora"
+    f"checkpoints/"
+    f"s3_grouped_occurrence_lora_seed{TRAIN_SEED}"
 )
-
-SEED = 42
 
 BATCH_SIZE = 8
 
@@ -58,12 +74,12 @@ MAX_LENGTH = 512
 # Seed
 # ============================================================
 
-random.seed(SEED)
+random.seed(TRAIN_SEED)
 
-torch.manual_seed(SEED)
+torch.manual_seed(TRAIN_SEED)
 
 if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
+    torch.cuda.manual_seed_all(TRAIN_SEED)
 
 
 device = torch.device(
@@ -72,10 +88,19 @@ device = torch.device(
     else "cpu"
 )
 
-
 print(
     "device:",
     device,
+)
+
+print(
+    "training seed:",
+    TRAIN_SEED,
+)
+
+print(
+    "output root:",
+    OUTPUT_ROOT,
 )
 
 
@@ -142,7 +167,7 @@ print(
 
 generator = torch.Generator()
 
-generator.manual_seed(SEED)
+generator.manual_seed(TRAIN_SEED)
 
 
 train_loader = DataLoader(

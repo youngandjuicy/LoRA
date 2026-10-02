@@ -1108,6 +1108,72 @@ S3 在 seed=42 的 ALL repeated-group subset 上表现出
 后续将通过额外 training seeds
 进一步检查该趋势是否能够在不同优化随机性下重复出现。
 
+## Multi-seed Robustness Check
+
+为了检查 S2 与 S3 的结论是否依赖单次 LoRA 训练随机性，
+固定 data split seed = 42，
+仅改变 training seed：
+
+`42 / 43 / 44`
+
+每个 seed 均训练 3 epochs，
+并按照 validation Strict Micro F1
+选择该 seed 的最佳 checkpoint。
+
+### Overall validation
+
+| Formulation | Strict Micro F1 | Surface-Type F1 |
+|---|---:|---:|
+| S2 | 0.7242 ± 0.0077 | 0.7292 ± 0.0094 |
+| S3 | 0.7195 ± 0.0044 | 0.7236 ± 0.0065 |
+
+S2 在 overall validation 上的平均表现略高于 S3，
+但两种 representation 的差异较小。
+
+因此，当前结果不支持 grouped representation
+能够稳定提升整体 NER performance。
+
+
+### ALL repeated groups
+
+| Formulation | Recall | F1 | Exact Group Accuracy |
+|---|---:|---:|---:|
+| S2 | 0.5781 ± 0.0422 | 0.7288 ± 0.0324 | 0.3239 ± 0.0732 |
+| S3 | 0.5991 ± 0.0107 | 0.7492 ± 0.0084 | 0.3803 ± 0.0244 |
+
+S3 在三个 repeated-group 指标上均取得更高的平均值，
+并表现出更小的跨 seed 波动。
+
+逐 seed 比较中，
+S3 在 seed 42 和 seed 44 上优于 S2，
+而 seed 43 上 S2 更优。
+
+因此，不能认为 S3 在每个 training seed 下都稳定优于 S2，
+但 multi-seed 结果支持以下较弱结论：
+
+grouped occurrence representation
+对 fully matched repeated-surface cases
+具有一定的平均收益，
+并可能减少 repeated-group performance 对训练随机性的敏感性。
+
+不过，该收益仍局限于较小的 repeated-group subset，
+没有转化为更高的 overall validation F1。
+
+
+## Final Representation Choice
+
+综合 overall validation、multi-seed robustness、
+representation complexity 和 repeated-group analysis：
+
+- S2 作为 main occurrence-aware formulation；
+- S3 保留为 targeted representation ablation。
+
+S2 在整体任务上平均略优且表示方式更简单；
+S3 则展示了 grouped representation
+在 repeated mentions 上的针对性收益。
+
+后续不再继续设计 S4/S5 representation。
+
 ## PARTIAL Groups 人工审计
 
 为了判断 PARTIAL subset 是否可以直接理解为 annotation noise，

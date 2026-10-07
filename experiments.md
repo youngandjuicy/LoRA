@@ -1354,3 +1354,133 @@ S3 则作为一个重要的 representation ablation，
 展示了 grouped repeated mentions 的收益，
 同时也暴露了 repeated-surface evaluation
 与实际 mention identity、数据标注完整性之间的复杂关系。
+
+
+# Final Held-out Evaluation
+
+## Protocol
+
+在完成 representation design、error analysis、paired bootstrap
+和 multi-seed robustness check 后，正式冻结模型设计和训练协议。
+
+最终选择：
+
+- Main formulation: S2 occurrence-aware representation
+- Model: Qwen2.5-0.5B-Instruct
+- LoRA: r=8, alpha=16, dropout=0.05
+- Target modules: q_proj, v_proj
+- Optimizer: AdamW
+- Learning rate: 2e-4
+- Epochs: 3
+- Training seeds: 42 / 43 / 44
+
+三个 training seed 均使用各自在 validation 上
+预先选定的 best checkpoint：
+
+| Seed | Selected Epoch |
+|---|---:|
+| 42 | 3 |
+| 43 | 3 |
+| 44 | 3 |
+
+Project test split 对应 official CLUENER dev，共 1343 条样本。
+
+该 split 在 protocol 冻结后未用于 prompt、representation、
+hyperparameter 或 checkpoint selection。
+
+需要说明的是，official dev 在项目早期曾被用于数据统计和少量样本观察，
+因此不将其描述为 completely unseen test set；
+更准确地将其视为 model development 冻结后的 held-out final evaluation split。
+
+
+## Per-seed Results
+
+| Seed | Strict P | Strict R | Strict F1 | Macro F1 | Surface-Type F1 | Schema Validity |
+|---|---:|---:|---:|---:|---:|---:|
+| 42 | 0.7686 | 0.6650 | 0.7131 | 0.7059 | 0.7182 | 97.6173% |
+| 43 | 0.7621 | 0.7122 | 0.7363 | 0.7369 | 0.7474 | 97.1705% |
+| 44 | 0.7662 | 0.6826 | 0.7220 | 0.7180 | 0.7325 | 97.4684% |
+
+
+## Mean ± Sample Standard Deviation
+
+| Metric | Final Test |
+|---|---:|
+| Strict Precision | 0.7656 ± 0.0033 |
+| Strict Recall | 0.6866 ± 0.0239 |
+| Strict Micro F1 | **0.7238 ± 0.0117** |
+| Strict Macro F1 | 0.7203 ± 0.0156 |
+| Surface-Type F1 | **0.7327 ± 0.0146** |
+| Schema Validity | 97.4187% ± 0.2275% |
+
+
+## Validation vs Final Test
+
+Multi-seed validation:
+
+- Strict Micro F1: `0.7242 ± 0.0077`
+- Surface-Type F1: `0.7292 ± 0.0094`
+
+Final held-out evaluation:
+
+- Strict Micro F1: `0.7238 ± 0.0117`
+- Surface-Type F1: `0.7327 ± 0.0146`
+
+Strict Micro F1 的平均差异仅为：
+
+`0.7238 - 0.7242 = -0.0004`
+
+因此，没有观察到明显的 validation-to-test performance degradation。
+
+Surface-Type F1 在 held-out split 上也保持了相近水平。
+
+该结果表明，S2 在 validation 上观察到的性能能够较好地迁移到
+冻结后的 held-out evaluation split，
+此前的 representation design 和 model selection
+没有表现出明显的 validation overfitting。
+
+
+## Final Conclusion
+
+本项目最终选择 S2 occurrence-aware representation 作为主方法。
+
+项目核心发现为：
+
+1. 直接生成 absolute character offsets
+   是小型 generative LLM 在该 NER 设置中的主要瓶颈之一。
+
+2. S1 虽然已经具备较强的实体语义识别能力，
+   但 absolute-offset generation 导致 Strict F1
+   显著低于 Surface-Type F1。
+
+3. Deterministic alignment（A1）证明，
+   大量 strict-span error 实际来自 offset generation，
+   而不是实体语义识别错误。
+
+4. S2 将 absolute offsets 替换为 occurrence index，
+   在保持 mention identity 的同时避免直接字符计数，
+   从训练目标层面解决了该问题。
+
+5. S3 grouped-occurrence representation
+   在 fully matched repeated-surface cases 上表现出针对性收益，
+   但没有进一步提高 overall validation performance，
+   因此最终保留为 representation ablation。
+
+6. PARTIAL repeated-surface audit 表明，
+   repeated-surface mismatch 不能简单等同于 annotation noise，
+   其中还包含 semantic ambiguity、substring overlap
+   和 mention-boundary difference。
+
+7. Paired bootstrap 和 multi-seed experiments
+   进一步评估了 evaluation sampling uncertainty
+   与 training randomness。
+
+8. 最终 S2 在 3 个 training seeds 的 held-out evaluation 上取得：
+
+   `Strict Micro F1 = 0.7238 ± 0.0117`
+
+   `Surface-Type F1 = 0.7327 ± 0.0146`
+
+   与 validation 结果基本一致。
+
+至此冻结模型与实验协议，不再根据 final-test 结果进行进一步调参。
